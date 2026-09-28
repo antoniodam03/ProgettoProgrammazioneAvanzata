@@ -35,7 +35,7 @@ CREATE TABLE utente (
 CREATE TABLE scorta (
     id                  INT AUTO_INCREMENT PRIMARY KEY,
     gruppo_sanguigno    ENUM('A', 'B', '0', 'AB') NOT NULL UNIQUE,
-    quantita            INT NOT NULL DEFAULT 0,
+    quantita            INT NOT NULL DEFAULT 0 CHECK (quantita >= 0),
     data_aggiornamento  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -64,7 +64,7 @@ CREATE TABLE paziente (
 CREATE TABLE richiesta (
     id               INT AUTO_INCREMENT PRIMARY KEY,
     id_paziente      INT NOT NULL,
-    quantita         INT NOT NULL DEFAULT 1,
+    quantita         INT NOT NULL DEFAULT 1 CHECK(quantita > 0),
     priorita         ENUM('normale', 'urgente') NOT NULL DEFAULT 'normale',
     stato            ENUM('in_attesa', 'soddisfatta', 'non_soddisfatta') NOT NULL DEFAULT 'in_attesa',
     id_utente        INT NOT NULL,
@@ -84,7 +84,7 @@ CREATE TABLE assegnazione (
     id                  INT AUTO_INCREMENT PRIMARY KEY,
     id_richiesta        INT NOT NULL,
     id_scorta           INT NOT NULL,
-    quantita_assegnata  INT NOT NULL,
+    quantita_assegnata  INT NOT NULL CHECK(quantita_assegnata > 0),
     data_calcolo        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
     FOREIGN KEY (id_richiesta) REFERENCES richiesta(id) ON DELETE CASCADE,
