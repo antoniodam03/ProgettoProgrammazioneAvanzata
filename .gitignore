@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+*.key
+*.key.pub
+.vscode/
+.DS_Store
