@@ -4,23 +4,23 @@ import type { richiesta, richiestaId } from './richiesta';
 
 export interface pazienteAttributes {
   id: number;
-  codice_paziente: string;
+  codice_paziente?: string;
   nome: string;
   cognome: string;
   data_nascita?: string;
   gruppo_sanguigno: 'A' | 'B' | '0' | 'AB';
-  stato?: 'ricoverato' | 'dimesso';
+  stato: 'ricoverato' | 'dimesso';
   data_registrazione?: Date;
 }
 
 export type pazientePk = "id";
 export type pazienteId = paziente[pazientePk];
-export type pazienteOptionalAttributes = "id" | "data_nascita" | "stato" | "data_registrazione";
+export type pazienteOptionalAttributes = "id" | "codice_paziente" | "data_nascita" | "stato" | "data_registrazione";
 export type pazienteCreationAttributes = Optional<pazienteAttributes, pazienteOptionalAttributes>;
 
 export class paziente extends Model<pazienteAttributes, pazienteCreationAttributes> implements pazienteAttributes {
   id!: number;
-  codice_paziente!: string;
+  codice_paziente?: string;
   nome!: string;
   cognome!: string;
   data_nascita?: string;
@@ -51,7 +51,7 @@ export class paziente extends Model<pazienteAttributes, pazienteCreationAttribut
     },
     codice_paziente: {
       type: DataTypes.STRING(50),
-      allowNull: false,
+      allowNull: true,
       unique: "codice_paziente"
     },
     nome: {
