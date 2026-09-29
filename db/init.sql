@@ -47,7 +47,7 @@ CREATE TABLE scorta (
 -- ------------------------------------------------------------
 CREATE TABLE paziente (
     id                   INT AUTO_INCREMENT PRIMARY KEY,
-    codice_paziente      VARCHAR(50) NOT NULL UNIQUE,
+    codice_paziente      VARCHAR(50) UNIQUE,
     nome                 VARCHAR(100) NOT NULL,
     cognome              VARCHAR(100) NOT NULL,
     data_nascita         DATE,
