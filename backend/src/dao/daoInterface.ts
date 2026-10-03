@@ -8,5 +8,5 @@ export interface DAO<T, K> {
     getById(id: K): Promise<T | null>;
     create(item: Partial<T>): Promise<T>;
     update(id: K, item: Partial<T>): Promise<T | null>;
-    delete(id: K): Promise<number | null>;
+    delete(id: K): Promise<number>;
 }
