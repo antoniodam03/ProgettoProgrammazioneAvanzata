@@ -39,12 +39,7 @@ export const updateScorta = async (req: Request, res: Response, next: NextFuncti
         const scortaAggiornata = await scortaRepository.aggiornaScorta(id, delta);
         //Dopo l'aggiornamento della scorta viene notificato l'evento
 
-        eventBus.emit('AGGIORNA_FLUSSO', {
-            type: 'scorta',
-            id: scortaAggiornata.id,
-            gruppo: scortaAggiornata.gruppo_sanguigno,
-            nuovaQuantita: scortaAggiornata.quantita
-        });
+        eventBus.emit('AGGIORNA_FLUSSO', 'scorta');
 
         res.status(StatusCodes.OK).json(scortaAggiornata);
     } catch (error) {

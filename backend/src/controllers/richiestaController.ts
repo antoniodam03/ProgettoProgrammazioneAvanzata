@@ -50,13 +50,7 @@ export const createRichiesta = async (req: AuthenticatedRequest, res: Response, 
 
         // Dopo la creazione della richiesta viene emessa la notificha
 
-        eventBus.emit('AGGIORNA_FLUSSO', {
-            type: 'richiesta',
-            id: nuovaRichiesta.id,
-            id_paziente: nuovaRichiesta.id_paziente,
-            priorita: nuovaRichiesta.priorita,
-            quantita: nuovaRichiesta.quantita
-        });
+       eventBus.emit('AGGIORNA_FLUSSO', 'richiesta');
 
         res.status(StatusCodes.CREATED).json(nuovaRichiesta);
     } catch (error) {
