@@ -504,3 +504,5 @@ sequenceDiagram
 
 ---
 
+## 🔌 API Routes
+
