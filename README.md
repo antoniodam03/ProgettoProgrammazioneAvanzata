@@ -264,10 +264,243 @@ Per la gestione delle risorse condivise, come ad esempio la connessione al DB, q
 
 ### Observer (Event-Driven con Debouncing)
 
-L'aggiornamento del calcolo dei flussi non viene chiamato esplicitamente all'interno del flusso HTTP. Si è optato per il pattern comportamentale **Observer** (Publish/Subscribe), realizzato con l'`EventEmitter` nativo di Node.js: l'`EventBus` (`events/eventbus.ts`) raccoglie gli eventi emessi dai Controller, mentre il `flowListener` (`events/flowListener.ts`) è l'osservatore che, all'arrivo della notifica, avvia il ricalcolo tramite `FlowService`.
+L'aggiornamento del calcolo dei flussi non viene chiamato esplicitamente all'interno del flusso HTTP. Si è optato per il pattern comportamentale **Observer** (Publish/Subscribe), realizzato con l'`EventEmitter` nativo di Node.js: l'`EventBus` (`events/eventbus.ts`) riceve gli eventi emessi dai Controller, mentre il `flowListener` (`events/flowListener.ts`) è l'osservatore che, all'arrivo della notifica, avvia il ricalcolo tramite `FlowService`.
 Quando un operatore inserisce una richiesta o un admin aggiorna le scorte, il Controller emette un evento asincrono e risponde immediatamente all'utente (`200 OK` per l'aggiornamento scorte, `201 Created` per la creazione di una nuova richiesta), delegando il ricalcolo a un processo in background.
 - **Debouncing delle scorte**: se l'admin aggiorna rapidamente 4 gruppi sanguigni diversi, l'algoritmo non ricalcola il grafo 4 volte inutilmente, ma attende un *delay* configurabile (3 secondi di inattività) prima di far partire un singolo ricalcolo ottimizzato.
-- **Richieste immediate**: la creazione di una richiesta ha delay 0 e avvia subito il ricalcolo. Se in quel momento è in attesa un timer delle scorte, questo viene annullato e gli eventi delle scorte vengono inclusi nello stesso ricalcolo.
+- **Richieste immediate**: la creazione di una richiesta ha delay 0 e avvia subito il ricalcolo. Se in quel momento è in attesa un timer delle scorte, questo viene annullato: il ricalcolo legge tutti i dati dal database, quindi comprende anche gli aggiornamenti delle scorte.
 - **Serializzazione dei ricalcoli**: l'`EventBus` decide *quando* ricalcolare, mentre il `flowListener` garantisce che sia in esecuzione *un solo ricalcolo alla volta*. Se arrivano nuovi eventi mentre un ricalcolo è in corso, il `flowListener` ne esegue un altro subito dopo, così che nessuna modifica venga persa.
+- **Eventi tipizzati**: l'`EventBus` dichiara gli eventi e i loro argomenti (`AGGIORNA_FLUSSO` con il tipo `richiesta` o `scorta`), così TypeScript segnala già in compilazione un evento emesso con un nome o un argomento sbagliato.
 - **Nota sulla priorità**: la precedenza delle richieste urgenti sulle normali vale all'interno di ogni singolo ricalcolo. Poiché ogni nuova richiesta avvia subito un ricalcolo e le sacche già assegnate non vengono più rimesse nel calcolo, una richiesta normale arrivata prima può ricevere sacche che, arrivando in un momento successivo, una richiesta urgente non troverà più disponibili.
+
+---
+
+## 🔄 Diagrammi delle sequenze
+
+## 1.5.3 Autenticazione (/auth)
+
+### 1. Autenticazione (POST /auth/login)
+
+Questo diagramma illustra il processo di autenticazione asimmetrica dell'utente. Il Controller delega l'intera logica all'`authService`, che verifica le credenziali tramite hash bcrypt e genera il token JWT firmato con la chiave privata RSA (RS256). Se le credenziali non sono valide, il Service lancia un errore che il Controller inoltra al middleware di gestione degli errori.
+
+```mermaid
+sequenceDiagram
+    actor U as Utente
+    participant R as authRoutes
+    participant V as validateLogin + validateRequestMiddleware
+    participant C as AuthController
+    participant S as authService
+    participant D as utenteDAO
+    participant DB as Database (Sequelize)
+    participant PW as password.ts (bcrypt)
+    participant JWT as jwt.ts
+    participant EH as errorHandlerMiddleware
+
+    U->>R: POST /auth/login { email, password }
+    R->>V: esegue catena di validazione
+
+    alt Email o password mancanti, non stringhe o email non valida
+        V->>EH: next(BadRequest)
+        EH-->>U: 400 Bad Request
+    else Dati validi
+        V->>C: next() → AuthController.login(req, res, next)
+        C->>S: authService.login(email, password)
+
+        S->>D: findByEmailWithPassword(email)
+        D->>DB: utente.findOne({ where: { email } })
+        DB-->>D: utente | null
+        D-->>S: user
+
+        alt Utente non trovato
+            S-->>C: throw Unauthorized ("Credenziali non valide")
+            C->>EH: next(error)
+            EH-->>U: 401 Unauthorized
+        else Utente trovato
+            S->>PW: verifyPassword(password, user.password_hash)
+            PW-->>S: true / false
+
+            alt Password errata
+                S-->>C: throw Unauthorized ("Credenziali non valide")
+                C->>EH: next(error)
+                EH-->>U: 401 Unauthorized
+            else Password corretta
+                S->>JWT: generateToken({ id, email, ruolo })
+                JWT-->>S: token JWT (RS256, 1h)
+                S-->>C: { token, ruolo }
+                C-->>U: 200 OK { token, ruolo }
+            end
+        end
+    end
+```
+
+## 1.5.4 Gestione Scorte Ematiche (/scorte)
+
+### 2. Visualizzazione Scorte (GET /scorte)
+
+Questo diagramma mostra il recupero delle scorte ematiche. Trattandosi di una semplice lettura senza logica, il Controller invoca direttamente il DAO.
+
+```mermaid
+sequenceDiagram
+    actor U as Utente (Admin)
+    participant R as scortaRoutes
+    participant AUTH as authMiddleware
+    participant AUTHZ as authorize(admin)
+    participant C as scortaController
+    participant D as scortaDAO
+    participant DB as Database (Sequelize)
+    participant EH as errorHandlerMiddleware
+
+    U->>R: GET /scorte  (Header: Bearer token)
+    R->>AUTH: authMiddleware(req, res, next)
+
+    alt Token assente o scaduto
+        AUTH->>EH: next(Unauthorized / TokenExpired)
+        EH-->>U: 401 Unauthorized
+    else Token malformato
+        AUTH->>EH: next(InvalidToken / JsonWebTokenError)
+        EH-->>U: 400 Bad Request
+    else Token valido
+        AUTH->>AUTH: verifyToken(token) → req.user
+        AUTH->>AUTHZ: next() → authorize(Ruolo.admin)
+
+        alt Ruolo utente ≠ admin
+            AUTHZ->>EH: next(Forbidden)
+            EH-->>U: 403 Forbidden
+        else Ruolo admin confermato
+            AUTHZ->>C: next() → getAllScorte(req, res, next)
+
+            C->>D: scortaDAO.getAll()
+            D->>DB: scorta.findAll()
+
+            alt Errore nell'accesso al DB
+                DB-->>D: errore Sequelize
+                D-->>C: propaga l'errore
+                C->>EH: next(error)
+                EH-->>U: 500 Internal Server Error
+            else Successo
+                DB-->>D: [ { id, gruppo_sanguigno, quantita, ... }, ... ]
+                D-->>C: array di scorte
+                C-->>U: 200 OK  [ scorte ]
+            end
+        end
+    end
+```
+
+## 1.5.5 Gestione Richieste Trasfusionali (/richieste)
+
+### 3. Visualizzazione Richieste (GET /richieste)
+
+**Accesso**: Ruolo Operatore.
+
+**Descrizione**: Ottiene tutte le richieste di trasfusione, con i dettagli del rispettivo paziente, supportando filtri opzionali via query string (`stato`, `priorita`, `gruppo_sanguigno`). Il Repository compone il risultato a partire da due DAO distinti, ciascuno sulla propria tabella: `pazienteDAO` fornisce i pazienti (filtrati per gruppo sanguigno, se richiesto) e `richiestaDAO` le richieste dei soli pazienti trovati, filtrate per stato e priorità. Il Repository ordina poi le richieste per priorità (prima le urgenti) e per data decrescente, e a ciascuna allega i dati del proprio paziente. Il DAO resta così limitato all'accesso ai dati di una singola tabella, senza join.
+
+```mermaid
+sequenceDiagram
+    actor U as Utente (Operatore)
+    participant R as richiestaRoutes
+    participant AUTH as authMiddleware
+    participant AUTHZ as authorize(operatore)
+    participant V as validateGetRichieste
+    participant C as richiestaController
+    participant REPO as richiestaRepository
+    participant PD as pazienteDAO
+    participant RD as richiestaDAO
+    participant DB as Database (Sequelize)
+    participant EH as errorHandlerMiddleware
+
+    U->>R: GET /richieste?stato=&priorita=&gruppo_sanguigno=  (Bearer token)
+    R->>AUTH: authMiddleware(req, res, next)
+
+    alt Token assente o scaduto
+        AUTH->>EH: next(Unauthorized / TokenExpired)
+        EH-->>U: 401 Unauthorized
+    else Token malformato
+        AUTH->>EH: next(InvalidToken / JsonWebTokenError)
+        EH-->>U: 400 Bad Request
+    else Token valido
+        AUTH->>AUTHZ: next() → authorize(Ruolo.operatore)
+
+        alt Ruolo utente ≠ operatore
+            AUTHZ->>EH: next(Forbidden)
+            EH-->>U: 403 Forbidden
+        else Ruolo operatore confermato
+            AUTHZ->>V: next() → validateGetRichieste
+
+            alt Query string non valida (stato/priorita/gruppo_sanguigno fuori enum)
+                V->>EH: next(BadRequest)
+                EH-->>U: 400 Bad Request
+            else Query valida
+                V->>C: next() → getAllRichieste(req, res, next)
+
+                C->>REPO: getAllRichieste({ stato, priorita, gruppo_sanguigno })
+                REPO->>PD: getAll()
+                PD->>DB: paziente.findAll()
+                DB-->>PD: pazienti
+                PD-->>REPO: pazienti
+                REPO->>REPO: filtra per gruppo_sanguigno (se richiesto)
+
+                alt Nessun paziente corrisponde al filtro
+                    REPO-->>C: []
+                else Pazienti trovati
+                    REPO->>RD: getAll({ id_paziente IN pazienti, stato, priorita })
+                    RD->>DB: richiesta.findAll({ where })
+                    DB-->>RD: richieste
+                    RD-->>REPO: richieste
+                    REPO->>REPO: ordina per priorità (urgenti prima) e data DESC<br/>e allega a ogni richiesta il proprio paziente
+                    REPO-->>C: array di richieste con paziente
+                end
+                C-->>U: 200 OK  [ richieste ]
+            end
+        end
+    end
+```
+
+---
+
+## 1.5.6 Gestione Assegnazioni (/assegnazioni)
+
+### 4. Visualizzazione Assegnazioni (GET /assegnazioni)
+
+**Accesso**: Ruolo Operatore.
+
+**Descrizione**: Mostra l'elenco delle assegnazioni matematiche effettuate in automatico dal risolutore di flusso. Trattandosi di una semplice lettura senza logica di business, il Controller invoca direttamente il DAO.
+
+```mermaid
+sequenceDiagram
+    actor U as Utente (Operatore)
+    participant R as assegnazioneRoutes
+    participant AUTH as authMiddleware
+    participant AUTHZ as authorize(operatore)
+    participant C as assegnazioneController
+    participant D as assegnazioneDAO
+    participant DB as Database (Sequelize)
+    participant EH as errorHandlerMiddleware
+
+    U->>R: GET /assegnazioni  (Bearer token)
+    R->>AUTH: authMiddleware(req, res, next)
+
+    alt Token assente o scaduto
+        AUTH->>EH: next(Unauthorized / TokenExpired)
+        EH-->>U: 401 Unauthorized
+    else Token malformato
+        AUTH->>EH: next(InvalidToken / JsonWebTokenError)
+        EH-->>U: 400 Bad Request
+    else Token valido
+        AUTH->>AUTHZ: next() → authorize(Ruolo.operatore)
+
+        alt Ruolo utente ≠ operatore
+            AUTHZ->>EH: next(Forbidden)
+            EH-->>U: 403 Forbidden
+        else Ruolo operatore confermato
+            AUTHZ->>C: next() → getAllAssegnazioni(req, res, next)
+
+            C->>D: assegnazioneDAO.getAll()
+            D->>DB: assegnazione.findAll()
+            DB-->>D: [ { id, id_richiesta, id_scorta, quantita_assegnata, ... }, ... ]
+            D-->>C: array di assegnazioni
+            C-->>U: 200 OK  [ assegnazioni ]
+        end
+    end
+```
+
+---
 
