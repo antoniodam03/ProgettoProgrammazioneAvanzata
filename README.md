@@ -129,7 +129,7 @@ Programmazione_Avanzata_trasfusioni/
 Il diagramma dei casi d'uso (UML Use Case Diagram) illustra le interazioni degli attori principali (**Admin** e **Operatore**) e dell'attore generale (**Utente**) con i diversi casi d'uso racchiusi all'interno del confine del sistema trasfusionale.
 
 <div align="center">
-  <img src="docs/Diagramma_casi_uso.drawio.png" alt="Diagramma dei Casi d'Uso UML" width="100%">
+  <img src="docs/Diagramma_casi_uso1.drawio.png" alt="Diagramma dei Casi d'Uso UML" width="100%">
 </div>
 
 #### Attori e Funzionalità Principali
