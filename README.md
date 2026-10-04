@@ -11,6 +11,7 @@
   <img src="https://img.shields.io/badge/Sequelize-52B0E7?style=for-the-badge&logo=sequelize&logoColor=white" alt="Sequelize"/>
   <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker"/>
   <img src="https://img.shields.io/badge/MySQL-4479A1?style=for-the-badge&logo=mysql&logoColor=white" alt="MySQL"/>
+  <img src="https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="Redis"/>
   <img src="https://img.shields.io/badge/JWT-000000?style=for-the-badge&logo=jsonwebtokens&logoColor=white" alt="JWT"/>
   <img src="https://img.shields.io/badge/Jest-C21325?style=for-the-badge&logo=jest&logoColor=white" alt="Jest"/>
   <img src="https://img.shields.io/badge/Postman-FF6C37?style=for-the-badge&logo=postman&logoColor=white" alt="Postman"/>
@@ -34,9 +35,6 @@
 - [🧪 Test](#-test)
   - [Test unitari con Jest](#test-unitari-con-jest)
   - [Test delle rotte con Postman](#test-delle-rotte-con-postman)
-- [🚀 Soluzioni Ingegneristiche](#-soluzioni-ingegneristiche)
-  - [Motore di Calcolo: Min-Cost Max-Flow](#motore-di-calcolo-min-cost-max-flow)
-- [🧮 Caso di Studio: 4 Pazienti — Scorte Sufficienti](#-caso-di-studio-4-pazienti--scorte-sufficienti)
 - [🛠️ Strumenti Utilizzati](#️-strumenti-utilizzati)
 - [👥 Autori](#-autori)
 
@@ -71,23 +69,28 @@ graph TD;
         subgraph Container-DB
             db[(MySQL 8<br>db:3306)]
         end
+        subgraph Container-Redis
+            redis[(Redis 7<br>redis:6379)]
+        end
     end
 
     %% Usando frecce più lunghe (--->) il testo non si accavalla
     user ---> |API REST Calls| backend
     backend ---> |Sequelize ORM| db
+    backend ---> |Sessioni: blacklist e versioni dei token| redis
 
     style backend fill:#9ff,stroke:#333,stroke-width:4px,color:#000
     style db fill:#ff9,stroke:#333,stroke-width:4px,color:#000
+    style redis fill:#f99,stroke:#333,stroke-width:4px,color:#000
     style user fill:#acf,stroke:#333,stroke-width:4px,color:#000
 ```
 
-L'ambiente backend prevede l'orchestrazione tramite `docker-compose` di due container principali. La logica applicativa è racchiusa interamente nel container Node.js, che implementa un'architettura **monolitica modulare**, isolando nettamente i livelli di Routing, Middleware (autenticazione, autorizzazione, validazione), Controller, Repository/Service e DAO.
+L'ambiente backend prevede l'orchestrazione tramite `docker-compose` di tre container: il backend Node.js, il database MySQL e il database in memory Redis, usato per gestire le sessioni (logout e revoca dei token). La logica applicativa è racchiusa interamente nel container Node.js, che implementa un'architettura **monolitica modulare**, isolando nettamente i livelli di Routing, Middleware (autenticazione, autorizzazione, validazione), Controller, Repository/Service e DAO.
 
 L'architettura del progetto si riflette sulle directory, che sono organizzate come segue: 
 
 ```text
-project/
+Programmazione_Avanzata_trasfusioni/
 ├── backend/
 │   ├── src/
 │   │   ├── controllers/
@@ -246,7 +249,7 @@ Il pattern Chain of Responsibility (COR) è un design pattern comportamentale ch
 
 I middleware, in particolare, permettono la creazione della catena di responsabilità, poiché Express.js stesso fa un ampio uso di questo pattern. I middleware, infatti, sono funzioni che vengono eseguite in sequenza per gestire le richieste HTTP. Sfruttando il COR, sono state implementate le seguenti funzionalità dei middleware:
 
-- **Middleware di autenticazione e autorizzazione** (`authMiddleware.ts`): verifica se l'utente è autenticato tramite JWT e se il suo ruolo (`admin` o `operatore`) è autorizzato ad eseguire l'operazione richiesta. Se non lo è, restituisce una risposta d'errore; altrimenti, passa la richiesta al middleware successivo.
+- **Middleware di autenticazione e autorizzazione** (`authMiddleware.ts`): verifica se l'utente è autenticato tramite JWT (firma e scadenza del token, poi su Redis che il token non sia stato invalidato con il logout o revocato per un cambio di ruolo o un'eliminazione dell'utente) e se il suo ruolo (`admin` o `operatore`) è autorizzato ad eseguire l'operazione richiesta. Se non lo è, restituisce una risposta d'errore; altrimenti, passa la richiesta al middleware successivo.
 - **Middleware di validazione** (`middleware/validate/`): viene utilizzato per validare i dati di una richiesta, che possono essere passati come `param`, `query` o `body`.
 - **Middleware di gestione degli errori** (`errorHandlerMiddleware.ts`): intercetta eventuali errori che si verificano nei middleware precedenti e restituisce una risposta d'errore appropriata, sfruttando un `errorHandler` personalizzato con il pattern Factory.
 
@@ -261,6 +264,8 @@ All'interno del sistema sviluppato, il pattern è stato utilizzato per la creazi
 Poiché diverse componenti dell'applicazione (Model, DAO, Repository) devono condividere la stessa connessione al database, è stato necessario l'utilizzo di un design pattern creazionale, chiamato Singleton, che garantisce la presenza di una classe con una sola istanza, la quale fornisce un punto di accesso globale ad essa. L'implementazione del pattern è stata eseguita proprio attraverso l'utilizzo del metodo `getInstance()` nella classe `Database` (`utils/database.ts`), che garantisce l'istanza di connessione Sequelize condivisa al database.
 
 Per la gestione delle risorse condivise, come ad esempio la connessione al DB, questo pattern risulta particolarmente efficace. In questo modo, oltre a garantire una sola connessione condivisa tra le varie parti dell'applicazione, vengono evitati problemi di concorrenza e viene migliorata l'efficienza delle risorse.
+
+Lo stesso pattern è applicato al client Redis: la classe `Redis` (`utils/redis.ts`) espone il metodo `getInstance()`, che crea un solo client condiviso da middleware e service. La connessione viene aperta una sola volta all'avvio, in `server.ts`, insieme a quella al database.
 
 ### Observer (Event-Driven con Debouncing)
 
@@ -280,7 +285,7 @@ Quando un operatore inserisce una richiesta o un admin aggiorna le scorte, il Co
 
 ### 1. Autenticazione (POST /auth/login)
 
-Questo diagramma illustra il processo di autenticazione asimmetrica dell'utente. Il Controller delega l'intera logica all'`authService`, che verifica le credenziali tramite hash bcrypt e genera il token JWT firmato con la chiave privata RSA (RS256). Se le credenziali non sono valide, il Service lancia un errore che il Controller inoltra al middleware di gestione degli errori.
+Questo diagramma illustra il processo di autenticazione asimmetrica dell'utente. Il Controller delega l'intera logica all'`authService`, che verifica le credenziali tramite hash bcrypt, legge da Redis la versione attuale dei token dell'utente e genera il token JWT firmato con la chiave privata RSA (RS256), che contiene anche la versione e un identificativo casuale (`jti`) che rende ogni token unico. Se le credenziali non sono valide, il Service lancia un errore che il Controller inoltra al middleware di gestione degli errori.
 
 ```mermaid
 sequenceDiagram
@@ -292,6 +297,7 @@ sequenceDiagram
     participant D as utenteDAO
     participant DB as Database (Sequelize)
     participant PW as password.ts (bcrypt)
+    participant RD as Redis
     participant JWT as jwt.ts
     participant EH as errorHandlerMiddleware
 
@@ -323,7 +329,9 @@ sequenceDiagram
                 C->>EH: next(error)
                 EH-->>U: 401 Unauthorized
             else Password corretta
-                S->>JWT: generateToken({ id, email, ruolo })
+                S->>RD: GET versioneUtente:<id>
+                RD-->>S: versione (0 se assente)
+                S->>JWT: generateToken({ id, email, ruolo, versione, jti })
                 JWT-->>S: token JWT (RS256, 1h)
                 S-->>C: { token, ruolo }
                 C-->>U: 200 OK { token, ruolo }
@@ -332,9 +340,48 @@ sequenceDiagram
     end
 ```
 
+### 2. Logout (POST /auth/logout)
+
+Il logout invalida il token usato nella richiesta. La rotta passa da `authMiddleware`, che verifica il token e salva in `req` il token e i dati dell'utente; il Controller delega all'`authService`, che inserisce l'hash SHA-256 del token nella blacklist su Redis con la stessa scadenza del token, così che Redis lo rimuova da solo quando il token non sarebbe comunque più valido. Da quel momento ogni richiesta con quel token riceve `401`.
+
+```mermaid
+sequenceDiagram
+    actor U as Utente (Admin o Operatore)
+    participant R as authRoutes
+    participant AUTH as authMiddleware
+    participant RD as Redis
+    participant C as AuthController
+    participant S as authService
+    participant EH as errorHandlerMiddleware
+
+    U->>R: POST /auth/logout  (Header: Bearer token)
+    R->>AUTH: authMiddleware(req, res, next)
+
+    alt Token assente, scaduto o malformato
+        AUTH->>EH: next(Unauthorized / TokenExpired / InvalidToken)
+        EH-->>U: 401 / 400
+    else Firma e scadenza valide
+        AUTH->>RD: EXISTS blacklist:<hash del token> + GET versioneUtente:<id>
+        alt Redis non raggiungibile
+            AUTH->>EH: next(error)
+            EH-->>U: 500 Internal Server Error
+        else Token già in blacklist o versione superata
+            AUTH->>EH: next(Unauthorized)
+            EH-->>U: 401 Unauthorized
+        else Token attivo
+            AUTH->>C: next() → AuthController.logout (req.user, req.token)
+            C->>S: authService.logout(token, exp)
+            S->>RD: SET blacklist:<hash del token> "1" EXAT exp
+            RD-->>S: OK
+            S-->>C: void
+            C-->>U: 200 OK { message: "Logout effettuato con successo" }
+        end
+    end
+```
+
 ## 1.5.4 Gestione Scorte Ematiche (/scorte)
 
-### 2. Visualizzazione Scorte (GET /scorte)
+### 3. Visualizzazione Scorte (GET /scorte)
 
 Questo diagramma mostra il recupero delle scorte ematiche. Trattandosi di una semplice lettura senza logica, il Controller invoca direttamente il DAO.
 
@@ -343,6 +390,7 @@ sequenceDiagram
     actor U as Utente (Admin)
     participant R as scortaRoutes
     participant AUTH as authMiddleware
+    participant RD as Redis
     participant AUTHZ as authorize(admin)
     participant C as scortaController
     participant D as scortaDAO
@@ -360,26 +408,35 @@ sequenceDiagram
         EH-->>U: 400 Bad Request
     else Token valido
         AUTH->>AUTH: verifyToken(token) → req.user
-        AUTH->>AUTHZ: next() → authorize(Ruolo.admin)
+        AUTH->>RD: EXISTS blacklist:<hash> + GET versioneUtente:<id>
+        alt Redis non raggiungibile
+            AUTH->>EH: next(error)
+            EH-->>U: 500 Internal Server Error
+        else Token revocato (logout) o versione superata (ruolo cambiato / utente eliminato)
+            AUTH->>EH: next(Unauthorized)
+            EH-->>U: 401 Unauthorized
+        else Token attivo
+            AUTH->>AUTHZ: next() → authorize(Ruolo.admin)
 
-        alt Ruolo utente ≠ admin
-            AUTHZ->>EH: next(Forbidden)
-            EH-->>U: 403 Forbidden
-        else Ruolo admin confermato
-            AUTHZ->>C: next() → getAllScorte(req, res, next)
+            alt Ruolo utente ≠ admin
+                AUTHZ->>EH: next(Forbidden)
+                EH-->>U: 403 Forbidden
+            else Ruolo admin confermato
+                AUTHZ->>C: next() → getAllScorte(req, res, next)
 
-            C->>D: scortaDAO.getAll()
-            D->>DB: scorta.findAll()
+                C->>D: scortaDAO.getAll()
+                D->>DB: scorta.findAll()
 
-            alt Errore nell'accesso al DB
-                DB-->>D: errore Sequelize
-                D-->>C: propaga l'errore
-                C->>EH: next(error)
-                EH-->>U: 500 Internal Server Error
-            else Successo
-                DB-->>D: [ { id, gruppo_sanguigno, quantita, ... }, ... ]
-                D-->>C: array di scorte
-                C-->>U: 200 OK  [ scorte ]
+                alt Errore nell'accesso al DB
+                    DB-->>D: errore Sequelize
+                    D-->>C: propaga l'errore
+                    C->>EH: next(error)
+                    EH-->>U: 500 Internal Server Error
+                else Successo
+                    DB-->>D: [ { id, gruppo_sanguigno, quantita, ... }, ... ]
+                    D-->>C: array di scorte
+                    C-->>U: 200 OK  [ scorte ]
+                end
             end
         end
     end
@@ -387,17 +444,18 @@ sequenceDiagram
 
 ## 1.5.5 Gestione Richieste Trasfusionali (/richieste)
 
-### 3. Visualizzazione Richieste (GET /richieste)
+### 4. Visualizzazione Richieste (GET /richieste)
 
 **Accesso**: Ruolo Operatore.
 
-**Descrizione**: Ottiene tutte le richieste di trasfusione, con i dettagli del rispettivo paziente, supportando filtri opzionali via query string (`stato`, `priorita`, `gruppo_sanguigno`). Il Repository compone il risultato a partire da due DAO distinti, ciascuno sulla propria tabella: `pazienteDAO` fornisce i pazienti (filtrati per gruppo sanguigno, se richiesto) e `richiestaDAO` le richieste dei soli pazienti trovati, filtrate per stato e priorità. Il Repository ordina poi le richieste per priorità (prima le urgenti) e per data decrescente, e a ciascuna allega i dati del proprio paziente. Il DAO resta così limitato all'accesso ai dati di una singola tabella, senza join.
+**Descrizione**: Questo diagramma ottiene tutte le richieste di trasfusione, con i dettagli del rispettivo paziente, supportando filtri opzionali via query string (`stato`, `priorita`, `gruppo_sanguigno`). Il Repository compone il risultato a partire da due DAO distinti, ciascuno sulla propria tabella: `pazienteDAO` fornisce i pazienti (filtrati per gruppo sanguigno, se richiesto) e `richiestaDAO` le richieste dei soli pazienti trovati, filtrate per stato e priorità. Il Repository ordina poi le richieste per priorità (prima le urgenti) e per data decrescente, e a ciascuna allega i dati del proprio paziente. Il DAO resta così limitato all'accesso ai dati di una singola tabella, senza join.
 
 ```mermaid
 sequenceDiagram
     actor U as Utente (Operatore)
     participant R as richiestaRoutes
     participant AUTH as authMiddleware
+    participant RD as Redis
     participant AUTHZ as authorize(operatore)
     participant V as validateGetRichieste
     participant C as richiestaController
@@ -416,39 +474,48 @@ sequenceDiagram
     else Token malformato
         AUTH->>EH: next(InvalidToken / JsonWebTokenError)
         EH-->>U: 400 Bad Request
-    else Token valido
-        AUTH->>AUTHZ: next() → authorize(Ruolo.operatore)
+    else Token valido (firma e scadenza)
+        AUTH->>RD: EXISTS blacklist:<hash> + GET versioneUtente:<id>
+        alt Redis non raggiungibile
+            AUTH->>EH: next(error)
+            EH-->>U: 500 Internal Server Error
+        else Token revocato (logout) o versione superata (ruolo cambiato / utente eliminato)
+            AUTH->>EH: next(Unauthorized)
+            EH-->>U: 401 Unauthorized
+        else Token attivo
+            AUTH->>AUTHZ: next() → authorize(Ruolo.operatore)
 
-        alt Ruolo utente ≠ operatore
-            AUTHZ->>EH: next(Forbidden)
-            EH-->>U: 403 Forbidden
-        else Ruolo operatore confermato
-            AUTHZ->>V: next() → validateGetRichieste
+            alt Ruolo utente ≠ operatore
+                AUTHZ->>EH: next(Forbidden)
+                EH-->>U: 403 Forbidden
+            else Ruolo operatore confermato
+                AUTHZ->>V: next() → validateGetRichieste
 
-            alt Query string non valida (stato/priorita/gruppo_sanguigno fuori enum)
-                V->>EH: next(BadRequest)
-                EH-->>U: 400 Bad Request
-            else Query valida
-                V->>C: next() → getAllRichieste(req, res, next)
+                alt Query string non valida (stato/priorita/gruppo_sanguigno fuori enum)
+                    V->>EH: next(BadRequest)
+                    EH-->>U: 400 Bad Request
+                else Query valida
+                    V->>C: next() → getAllRichieste(req, res, next)
 
-                C->>REPO: getAllRichieste({ stato, priorita, gruppo_sanguigno })
-                REPO->>PD: getAll()
-                PD->>DB: paziente.findAll()
-                DB-->>PD: pazienti
-                PD-->>REPO: pazienti
-                REPO->>REPO: filtra per gruppo_sanguigno (se richiesto)
+                    C->>REPO: getAllRichieste({ stato, priorita, gruppo_sanguigno })
+                    REPO->>PD: getAll()
+                    PD->>DB: paziente.findAll()
+                    DB-->>PD: pazienti
+                    PD-->>REPO: pazienti
+                    REPO->>REPO: filtra per gruppo_sanguigno (se richiesto)
 
-                alt Nessun paziente corrisponde al filtro
-                    REPO-->>C: []
-                else Pazienti trovati
-                    REPO->>RD: getAll({ id_paziente IN pazienti, stato, priorita })
-                    RD->>DB: richiesta.findAll({ where })
-                    DB-->>RD: richieste
-                    RD-->>REPO: richieste
-                    REPO->>REPO: ordina per priorità (urgenti prima) e data DESC<br/>e allega a ogni richiesta il proprio paziente
-                    REPO-->>C: array di richieste con paziente
+                    alt Nessun paziente corrisponde al filtro
+                        REPO-->>C: []
+                    else Pazienti trovati
+                        REPO->>RD: getAll({ id_paziente IN pazienti, stato, priorita })
+                        RD->>DB: richiesta.findAll({ where })
+                        DB-->>RD: richieste
+                        RD-->>REPO: richieste
+                        REPO->>REPO: ordina per priorità (urgenti prima) e data DESC<br/>e allega a ogni richiesta il proprio paziente
+                        REPO-->>C: array di richieste con paziente
+                    end
+                    C-->>U: 200 OK  [ richieste ]
                 end
-                C-->>U: 200 OK  [ richieste ]
             end
         end
     end
@@ -458,7 +525,7 @@ sequenceDiagram
 
 ## 1.5.6 Gestione Assegnazioni (/assegnazioni)
 
-### 4. Visualizzazione Assegnazioni (GET /assegnazioni)
+### 5. Visualizzazione Assegnazioni (GET /assegnazioni)
 
 **Accesso**: Ruolo Operatore.
 
@@ -469,6 +536,7 @@ sequenceDiagram
     actor U as Utente (Operatore)
     participant R as assegnazioneRoutes
     participant AUTH as authMiddleware
+    participant RD as Redis
     participant AUTHZ as authorize(operatore)
     participant C as assegnazioneController
     participant D as assegnazioneDAO
@@ -484,20 +552,29 @@ sequenceDiagram
     else Token malformato
         AUTH->>EH: next(InvalidToken / JsonWebTokenError)
         EH-->>U: 400 Bad Request
-    else Token valido
-        AUTH->>AUTHZ: next() → authorize(Ruolo.operatore)
+    else Token valido (firma e scadenza)
+        AUTH->>RD: EXISTS blacklist:<hash> + GET versioneUtente:<id>
+        alt Redis non raggiungibile
+            AUTH->>EH: next(error)
+            EH-->>U: 500 Internal Server Error
+        else Token revocato (logout) o versione superata (ruolo cambiato / utente eliminato)
+            AUTH->>EH: next(Unauthorized)
+            EH-->>U: 401 Unauthorized
+        else Token attivo
+            AUTH->>AUTHZ: next() → authorize(Ruolo.operatore)
 
-        alt Ruolo utente ≠ operatore
-            AUTHZ->>EH: next(Forbidden)
-            EH-->>U: 403 Forbidden
-        else Ruolo operatore confermato
-            AUTHZ->>C: next() → getAllAssegnazioni(req, res, next)
+            alt Ruolo utente ≠ operatore
+                AUTHZ->>EH: next(Forbidden)
+                EH-->>U: 403 Forbidden
+            else Ruolo operatore confermato
+                AUTHZ->>C: next() → getAllAssegnazioni(req, res, next)
 
-            C->>D: assegnazioneDAO.getAll()
-            D->>DB: assegnazione.findAll()
-            DB-->>D: [ { id, id_richiesta, id_scorta, quantita_assegnata, ... }, ... ]
-            D-->>C: array di assegnazioni
-            C-->>U: 200 OK  [ assegnazioni ]
+                C->>D: assegnazioneDAO.getAll()
+                D->>DB: assegnazione.findAll()
+                DB-->>D: [ { id, id_richiesta, id_scorta, quantita_assegnata, ... }, ... ]
+                D-->>C: array di assegnazioni
+                C-->>U: 200 OK  [ assegnazioni ]
+            end
         end
     end
 ```
@@ -505,4 +582,33 @@ sequenceDiagram
 ---
 
 ## 🔌 API Routes
+
+Il sistema espone rotte protette (necessitano di header `Authorization: Bearer <token>`).
+
+
+| Tipo   | Rotta                         | Autenticazione | Autorizzazione     | Descrizione                                    |
+|--------|--------------------------------|:--------------:|----------------------|-------------------------------------------------|
+| POST   | /auth/login                    |                 |                       | Login e generazione token JWT                   |
+| POST   | /auth/logout                   | ✓               | Admin, Operatore      | Logout: invalida il token usato nella richiesta |
+| GET    | /utenti                        | ✓               | Admin      | Elenco di tutti gli utenti                       |
+| GET    | /utenti/:id                     | ✓               | Admin, Operatore      | Dettagli di un singolo utente                    |
+| POST   | /utenti                        | ✓               | Admin                 | Crea un nuovo utente                             |
+| PUT    | /utenti/:id/ruolo                | ✓               | Admin                 | Aggiorna il ruolo di un utente                   |
+| DELETE | /utenti/:id                     | ✓               | Admin                 | Elimina un utente                                |
+| GET    | /pazienti/ricoverati             | ✓               | Operatore             | Elenco dei pazienti attualmente ricoverati       |
+| GET    | /pazienti                      | ✓               | Operatore             | Elenco di tutti i pazienti (storico incluso)     |
+| GET    | /pazienti/:id                    | ✓               | Operatore             | Dettagli di un singolo paziente                  |
+| POST   | /pazienti                      | ✓               | Operatore             | Registra un nuovo paziente                       |
+| PUT    | /pazienti/:id                    | ✓               | Operatore             | Aggiorna i dati anagrafici di un paziente        |
+| DELETE | /pazienti/:id                    | ✓               | Operatore             | Dimette il paziente (soft delete), solo se non ha richieste pendenti |
+| GET    | /scorte                        | ✓               | Admin                 | Elenco delle scorte per gruppo sanguigno         |
+| GET    | /scorte/:id                      | ✓               | Admin                 | Dettagli di una singola scorta                   |
+| PUT    | /scorte/:id                      | ✓               | Admin                 | Aggiorna la quantità di una scorta tramite `delta` |
+| GET    | /richieste                      | ✓               | Operatore             | Elenco delle richieste di trasfusione            |
+| GET    | /richieste/:id                    | ✓               | Operatore             | Dettagli di una singola richiesta con i dati del paziente |
+| POST   | /richieste                      | ✓               | Operatore             | Crea una nuova richiesta di trasfusione          |
+| GET    | /assegnazioni                    | ✓               | Operatore             | Elenco delle assegnazioni calcolate dal flusso   |
+| GET    | /assegnazioni/:id                  | ✓               | Operatore             | Dettagli di una singola assegnazione             |
+
+Il logout invalida solo il token usato nella richiesta. Dopo un cambio di ruolo o l'eliminazione di un utente, invece, vengono invalidati **tutti** i token già emessi per quell'utente: per continuare deve rifare il login.
 
