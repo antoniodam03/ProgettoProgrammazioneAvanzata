@@ -4,6 +4,7 @@ import { StatusCodes } from 'http-status-codes';
 import { ErrorFactory, ErrorTypes } from '../utils/errorFactory';
 import { AuthenticatedRequest, Ruolo } from '../middleware/authMiddleware';
 import utenteRepository from '../repositories/utenteRepository';
+import authService from '../services/authService';
 
 /**
  * Ottiene tutti gli utenti.
@@ -46,6 +47,8 @@ export const updateRuolo = async (req: Request, res: Response, next: NextFunctio
     const { ruolo } = req.body;
     try {
         const updateUtente = await utenteRepository.update(id, {ruolo});
+        // Il ruolo è scritto nel token: i token già emessi non sono più affidabili
+        await authService.revocaTokenUtente(id);
         res.status(StatusCodes.OK).json({
             message: `Ruolo aggiornato con successo per l'utente ${id}`,
             utente: updateUtente
@@ -63,6 +66,8 @@ export const deleteUser = async (req: Request, res: Response, next: NextFunction
     const id = Number(req.params.id);
     try{
         await utenteRepository.delete(id);
+        // L'utente non esiste più: i suoi token non devono più essere accettati
+        await authService.revocaTokenUtente(id);
         return res.status(StatusCodes.NO_CONTENT).send();
     }catch(error){
         return next(error);

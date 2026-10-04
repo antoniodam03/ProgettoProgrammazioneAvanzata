@@ -4,6 +4,7 @@
 
 import app from './app';
 import { sequelize } from './utils/database';
+import { redisClient } from './utils/redis';
 
 // Definizione della porta dove il server resta in ascolto
 const PORT = process.env.PORT || 3000;
@@ -14,6 +15,11 @@ const connectWithRetry = async () => {
         try {
             await sequelize.authenticate();
             console.log('Connessione al DB riuscita');
+            // Connessione a Redis (una sola volta: connect() su un client già aperto darebbe errore)
+            if (!redisClient.isOpen) {
+                await redisClient.connect();
+            }
+            console.log('Connessione a Redis riuscita');
             app.listen(PORT, () => {
                 console.log(`Server avviato sulla porta ${PORT}`);
             });

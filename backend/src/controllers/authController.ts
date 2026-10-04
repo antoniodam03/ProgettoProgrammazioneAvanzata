@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { StatusCodes } from 'http-status-codes';
 import authService from '../services/authService';
+import { AuthenticatedRequest } from '../middleware/authMiddleware';
 
 export class AuthController {
     /**
@@ -13,6 +14,18 @@ export class AuthController {
             const result = await authService.login(email, password);
             res.status(StatusCodes.OK).json(result);
         } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * Esegue il logout dell'utente invalidando il token JWT.
+     */
+    static async logout(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+        try{
+            await authService.logout(req.token!, req.user!.exp!);
+            res.status(StatusCodes.OK).json({ message: 'Logout effettuato con successo' });
+        }catch(error){
             next(error);
         }
     }
