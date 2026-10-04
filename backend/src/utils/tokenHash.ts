@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 
 /**
- * Inserisce il token nella blacklist.
+ * Restituisce la chiave Redis della blacklist per un token: l'hash SHA-256 del token, non il token intero.
  */
 export const blacklistKey = (token: string): string =>
     `blacklist:${createHash('sha256').update(token).digest('hex')}`;
