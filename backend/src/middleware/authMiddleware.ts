@@ -79,8 +79,7 @@ export const authMiddleware = async (req: AuthenticatedRequest, res: Response, n
 
 /**
  * Middleware 2 — Autorizzazione per ruolo.
- * Restituisce un middleware che verifica che il ruolo dell'utente sia
- * ESATTAMENTE tra quelli ammessi
+ * Restituisce un middleware che verifica che il ruolo dell'utente sia tra quelli ammessi
  * @param ruoliAmmessi Uno o più ruoli che possono accedere alla rotta
  */
 export const authorize = (...ruoliAmmessi: Ruolo[]) => {
