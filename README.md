@@ -67,7 +67,7 @@ graph TD;
             backend[Backend-Trasfusioni<br>backend:3000]
         end
         subgraph Container-DB
-            db[(MySQL 8<br>db:3306)]
+            db[(MySQL<br>db:3306)]
         end
         subgraph Container-Redis
             redis[(Redis 7<br>redis:6379)]
@@ -152,13 +152,17 @@ Il diagramma dei casi d'uso (UML Use Case Diagram) illustra le interazioni degli
 
 4. **Operatore**
    - **Gestione Richieste**:
-     - *Visualizza richieste trasfusioni* & *Visualizza specifica richiesta*: Monitoraggio dello stato delle richieste sanitarie, con i dati del paziente associato.
+     - *Visualizza richieste trasfusioni* e *Visualizza specifica richiesta*: Monitoraggio dello stato delle richieste sanitarie, con i dati del paziente associato.
      - *Inserimento nuova richiesta*: Registrazione di un nuovo bisogno trasfusionale. Questa azione **include** automaticamente il ricalcolo del flusso (`Calcola Min Cost Max Flow`).
+     - *Annulla richiesta*: Cancellazione di una richiesta ancora `in_attesa`, cioè che non ha ancora ricevuto sacche. Una richiesta già servita, anche solo in parte, non può essere annullata.
    - **Gestione Pazienti**:
-     - *Visualizza pazienti* & *Visualizza specifico paziente*: Ricerca e visualizzazione delle schede cliniche.
+     - *Visualizza pazienti* e *Visualizza specifico paziente*: Ricerca e visualizzazione delle schede cliniche.
+     - *Visualizza pazienti ricoverati*: Elenco dei soli pazienti attualmente ricoverati, esclusi i dimessi.
      - *Registra paziente*: Inserimento di una nuova scheda anagrafica e del gruppo sanguigno associato.
      - *Aggiorna anagrafica paziente*: Modifica dei dettagli del paziente.
      - *Dimetti paziente*: Dimissione del paziente, gestita tramite soft-delete logico (lo stato passa a `dimesso`) per non perdere lo storico. La dimissione è consentita solo se il paziente non ha richieste pendenti (`in_attesa` o `non_soddisfatta`).
+   - **Gestione Assegnazioni**:
+     - *Visualizza assegnazioni* e *Visualizza specifica assegnazione*: Consultazione delle sacche assegnate alle richieste dal calcolo del flusso, con la scorta di provenienza e la quantità.
 
 5. **Relazioni di Inclusione Interna (`<<include>>`)**
    - **Calcola Min Cost Max Flow**: Invocato automaticamente da *Aggiorna quantità scorte* e *Inserimento nuova richiesta*. Rappresenta il motore algoritmico del sistema che ricalcola il flusso massimo a costo minimo della rete trasfusionale.
@@ -221,7 +225,7 @@ Il DAO presenta diverse componenti: l'interfaccia di definizione dei metodi di a
 
 L'utilità principale del pattern è rappresentata dal fatto che ad un singolo Model viene corrisposto un singolo DAO, garantendo l'accesso ai dati necessari, e, soprattutto, uno o più DAO possono essere richiamati da componenti superiori quali i Repository, per l'utilizzo combinato dell'accesso ai dati. In questo modo, non solo è garantita un'elevata riutilizzabilità del codice in diverse parti dell'applicazione, ma soprattutto viene implementata una forte modularità e separazione delle responsabilità da parte di tutte le componenti.
 
-All'interno del progetto, i DAO (`backend/src/dao/`) sono stati implementati per tutte le CRUD delle entità `utente`, `paziente`, `richiesta`, `scorta` e `assegnazione`, indipendentemente dal fatto che servissero o meno ai fini dello scopo.
+All'interno del progetto, i DAO (`backend/src/dao/`) di `utente`, `paziente` e `richiesta` implementano l'interfaccia CRUD completa (`DAO`), mentre quelli di `scorta` e `assegnazione` implementano solo l'interfaccia di lettura (`ReadDAO`), più i metodi effettivamente necessari: l'aggiornamento della quantità delle scorte e l'inserimento in blocco delle assegnazioni calcolate dal flusso. In questo modo nessuna classe è costretta a implementare metodi che non utilizza (principio di segregazione delle interfacce).
 
 ### Repository
 
@@ -240,7 +244,9 @@ Nel progetto i Repository hanno le seguenti responsabilità:
 ### Service
 
 Accanto ai Repository, legati a una singola entità, il progetto utilizza un livello **Service** (`backend/src/services/`) per i casi d'uso applicativi che coinvolgono più componenti e non corrispondono alla gestione dei dati di una singola entità:
-- **`authService`**: gestisce il login. Recupera l'utente tramite `utenteDAO`, verifica la password con bcrypt e genera il token JWT firmato con RS256. In caso di credenziali errate lancia un errore `Unauthorized` con lo stesso messaggio, sia che l'email non esista sia che la password sia sbagliata.
+- **`authService`**: gestisce il login. Recupera l'utente tramite `utenteDAO`, verifica la password con bcrypt e genera il token JWT firmato con RS256. In caso di credenziali errate lancia un errore `Unauthorized` con lo stesso messaggio, sia che l'email non esista sia che la password sia sbagliata. Gestisce inoltre, tramite Redis:
+  - *logout*: inserisce l'hash SHA-256 del token nella blacklist su Redis, con la stessa scadenza del token;
+  - *revoca dei token*: dopo un cambio di ruolo o l'eliminazione di un utente incrementa su Redis la sua versione, così che tutti i token già emessi per quell'utente vengano rifiutati.
 - **`FlowService`**: esegue il ricalcolo delle assegnazioni tramite l'algoritmo Min-Cost Max-Flow, coordinando `scortaDAO`, `richiestaRepository`, `richiestaDAO` e `assegnazioneDAO` all'interno di un'unica transazione.
 
 ### Chain of Responsibility (COR)
@@ -455,7 +461,7 @@ sequenceDiagram
     actor U as Utente (Operatore)
     participant R as richiestaRoutes
     participant AUTH as authMiddleware
-    participant RD as Redis
+    participant REDIS as Redis
     participant AUTHZ as authorize(operatore)
     participant V as validateGetRichieste
     participant C as richiestaController
@@ -475,7 +481,7 @@ sequenceDiagram
         AUTH->>EH: next(InvalidToken / JsonWebTokenError)
         EH-->>U: 400 Bad Request
     else Token valido (firma e scadenza)
-        AUTH->>RD: EXISTS blacklist:<hash> + GET versioneUtente:<id>
+        AUTH->>REDIS: EXISTS blacklist:<hash> + GET versioneUtente:<id>
         alt Redis non raggiungibile
             AUTH->>EH: next(error)
             EH-->>U: 500 Internal Server Error
@@ -607,8 +613,518 @@ Il sistema espone rotte protette (necessitano di header `Authorization: Bearer <
 | GET    | /richieste                      | ✓               | Operatore             | Elenco delle richieste di trasfusione            |
 | GET    | /richieste/:id                    | ✓               | Operatore             | Dettagli di una singola richiesta con i dati del paziente |
 | POST   | /richieste                      | ✓               | Operatore             | Crea una nuova richiesta di trasfusione          |
+| DELETE | /richieste/:id                  | ✓               | Operatore             | Annulla una richiesta ancora in attesa (nessuna sacca assegnata) |
 | GET    | /assegnazioni                    | ✓               | Operatore             | Elenco delle assegnazioni calcolate dal flusso   |
 | GET    | /assegnazioni/:id                  | ✓               | Operatore             | Dettagli di una singola assegnazione             |
 
 Il logout invalida solo il token usato nella richiesta. Dopo un cambio di ruolo o l'eliminazione di un utente, invece, vengono invalidati **tutti** i token già emessi per quell'utente: per continuare deve rifare il login.
 
+---
+## 🔌 Esempi rotte
+
+Esempi reali delle rotte che ricevono dati nel body della richiesta, più alcune rotte senza body (`GET /utenti`, `GET /assegnazioni` e `POST /auth/logout`), con la relativa risposta.
+
+1. Rotta
+```json
+POST /auth/login
+```
+
+Unica rotta pubblica: non richiede il token. Il token restituito va inviato nelle altre richieste nell'header `Authorization: Bearer <token>`.
+**Richiesta:**
+
+Nel body:
+
+```json
+{
+    "email": "admin@ospedale.it",
+    "password": "Password123!"
+}
+```
+
+**Risposta** (`200`):
+
+```json
+{
+    "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "ruolo": "admin"
+}
+```
+
+2. Rotta
+```json
+GET /utenti
+```
+
+Solo admin. Restituisce tutti gli utenti registrati; il campo `password_hash` non compare mai nella risposta.
+
+**Richiesta:**
+
+Nessun body: basta l'header `Authorization: Bearer <token>` con il token dell'admin.
+
+**Risposta** (`200`):
+
+```json
+[
+    {
+        "id": 1,
+        "nome": "Admin",
+        "cognome": "Sistema",
+        "username": "admin",
+        "email": "admin@ospedale.it",
+        "ruolo": "admin",
+        "data_creazione": "2026-10-08T13:48:31.000Z"
+    },
+    {
+        "id": 2,
+        "nome": "Giulia",
+        "cognome": "Romano",
+        "username": "giulia.r",
+        "email": "giulia.romano@ospedale.it",
+        "ruolo": "operatore",
+        "data_creazione": "2026-10-08T13:48:31.000Z"
+    },
+    {
+        "id": 3,
+        "nome": "Marco",
+        "cognome": "Ferri",
+        "username": "marco.f",
+        "email": "marco.ferri@ospedale.it",
+        "ruolo": "operatore",
+        "data_creazione": "2026-10-08T13:48:31.000Z"
+    }
+]
+```
+
+3. Rotta
+```json
+POST /utenti
+```
+
+Solo admin. La password viene salvata come hash bcrypt e non compare mai nella risposta; l'email viene salvata in minuscolo.
+
+**Richiesta:**
+
+Nel body:
+
+```json
+{
+    "nome": "Test",
+    "cognome": "Test",
+    "username": "TestUser",
+    "email": "TestUser@ospedale.it",
+    "password": "TestPassword",
+    "ruolo": "operatore"
+}
+```
+
+**Risposta** (`201`):
+
+```json
+{
+    "id": 4,
+    "nome": "Test",
+    "cognome": "Test",
+    "username": "TestUser",
+    "email": "testuser@ospedale.it",
+    "ruolo": "operatore",
+    "data_creazione": "2026-10-03T16:28:49.000Z"
+}
+```
+
+4. Rotta
+```json
+PUT /utenti/:id/ruolo
+```
+
+Solo admin. Il ruolo può essere `admin` o `operatore`.
+
+**Richiesta:**
+
+Nel body:
+
+```json
+{
+    "ruolo": "admin"
+}
+```
+
+**Risposta** (`200`):
+
+```json
+{
+    "message": "Ruolo aggiornato con successo per l'utente 4",
+    "utente": {
+        "id": 4,
+        "nome": "Test",
+        "cognome": "Test",
+        "username": "TestUser",
+        "email": "testuser@ospedale.it",
+        "ruolo": "admin",
+        "data_creazione": "2026-10-03T16:28:49.000Z"
+    }
+}
+```
+
+5. Rotta
+```json
+PUT /scorte/:id
+```
+
+Solo admin. `delta` positivo aggiunge sacche, negativo le rimuove. Dopo l'aggiornamento parte, con un ritardo di 3 secondi, il ricalcolo del flusso.
+
+**Richiesta:**
+
+Nel body:
+
+```json
+{
+    "delta": 5
+}
+```
+
+**Risposta** (`200`):
+
+```json
+{
+    "id": 1,
+    "gruppo_sanguigno": "A",
+    "quantita": 15,
+    "data_aggiornamento": "2026-10-03T16:28:49.000Z"
+}
+```
+
+**Risposta** (`400`, quantità risultante negativa con `"delta": -100`):
+
+```json
+{
+    "error": {
+        "statusCode": 400,
+        "code": "BAD_REQUEST",
+        "message": "Scorte insufficienti. Quantità attuale: 15, variazione richiesta: -100, risultato: -85"
+    }
+}
+```
+
+6. Rotta
+```json
+POST /pazienti
+```
+
+Solo operatore. Il codice `PZ-<id>` e lo stato `ricoverato` vengono assegnati automaticamente.
+
+**Richiesta:**
+
+Nel body:
+
+```json
+{
+    "nome": "Elena",
+    "cognome": "Conti",
+    "data_nascita": "1992-05-14",
+    "gruppo_sanguigno": "A"
+}
+```
+
+**Risposta** (`201`):
+
+```json
+{
+    "id": 4,
+    "codice_paziente": "PZ-4",
+    "nome": "Elena",
+    "cognome": "Conti",
+    "data_nascita": "1992-05-14",
+    "gruppo_sanguigno": "A",
+    "stato": "ricoverato",
+    "data_registrazione": "2026-10-03T16:28:49.000Z"
+}
+```
+
+7. Rotta
+```json
+PUT /pazienti/:id
+```
+
+Solo operatore. Si possono inviare uno o più campi tra `nome`, `cognome`, `data_nascita` e `gruppo_sanguigno`; gli altri restano invariati.
+
+**Richiesta:**
+
+Nel body:
+
+```json
+{
+    "cognome": "Conti Rossi"
+}
+```
+
+**Risposta** (`200`):
+
+```json
+{
+    "id": 4,
+    "codice_paziente": "PZ-4",
+    "nome": "Elena",
+    "cognome": "Conti Rossi",
+    "data_nascita": "1992-05-14",
+    "gruppo_sanguigno": "A",
+    "stato": "ricoverato",
+    "data_registrazione": "2026-10-03T16:28:49.000Z"
+}
+```
+
+8. Rotta
+```json
+POST /richieste
+```
+
+Solo operatore. L'utente viene ricavato dal token. La richiesta nasce `in_attesa` e fa partire subito il ricalcolo del flusso, che può assegnarle le sacche e cambiarne lo stato.
+
+**Richiesta:**
+
+Nel body:
+
+```json
+{
+    "id_paziente": 4,
+    "quantita": 2,
+    "priorita": "urgente"
+}
+```
+
+**Risposta** (`201`):
+
+```json
+{
+    "id": 4,
+    "id_paziente": 4,
+    "quantita": 2,
+    "priorita": "urgente",
+    "stato": "in_attesa",
+    "id_utente": 2,
+    "data_richiesta": "2026-10-03T16:28:49.000Z"
+}
+```
+
+9. Rotta
+```json
+GET /assegnazioni
+```
+
+Solo operatore. Restituisce le assegnazioni calcolate dall'algoritmo di flusso. Risultato reale ottenuto sul database iniziale di `init.sql`, che contiene 3 richieste in attesa: l'admin aggiunge 5 sacche alla scorta A (`PUT /scorte/1` con `"delta": 5`, A passa da 10 a 15). Dopo i 3 secondi del debounce parte il ricalcolo del flusso, che serve le 3 richieste esistenti.
+
+**Richiesta:**
+
+Nessun body: basta l'header `Authorization: Bearer <token>` con il token dell'operatore.
+
+**Risposta** (`200`):
+
+```json
+[
+    {
+        "id": 1,
+        "id_richiesta": 1,
+        "id_scorta": 1,
+        "quantita_assegnata": 3,
+        "data_calcolo": "2026-10-08T19:52:08.000Z"
+    },
+    {
+        "id": 2,
+        "id_richiesta": 3,
+        "id_scorta": 3,
+        "quantita_assegnata": 4,
+        "data_calcolo": "2026-10-08T19:52:08.000Z"
+    },
+    {
+        "id": 3,
+        "id_richiesta": 2,
+        "id_scorta": 2,
+        "quantita_assegnata": 2,
+        "data_calcolo": "2026-10-08T19:52:08.000Z"
+    }
+]
+```
+
+Lettura del risultato (scorte: `1` = A, `2` = B, `3` = 0, `4` = AB):
+
+| Richiesta | Paziente | Priorità | Sacche | Assegnate da | Stato |
+|---|---|---|---|---|---|
+| 1 | Marco Rossi (A) | urgente | 3 | scorta A (costo 1) | soddisfatta |
+| 3 | Luca Verdi (0) | urgente | 4 | scorta 0 (costo 1) | soddisfatta |
+| 2 | Giulia Bianchi (B) | normale | 2 | scorta B (costo 1) | soddisfatta |
+
+Le urgenti vengono servite nella prima fase e la normale nella seconda. Ogni richiesta riceve sangue del proprio gruppo, cioè al costo minimo, e il sangue di gruppo 0 non viene usato per gli altri gruppi. Le scorte finali sono A = 12, B = 4, 0 = 11, AB = 4.
+
+10. Rotta
+```json
+POST /auth/logout
+```
+
+Admin e operatore. Invalida il token usato nella richiesta: il suo hash viene inserito nella blacklist su Redis fino alla scadenza del token.
+
+**Richiesta:**
+
+Nessun body: basta l'header `Authorization: Bearer <token>` con il token da invalidare.
+
+**Risposta** (`200`):
+
+```json
+{
+    "message": "Logout effettuato con successo"
+}
+```
+
+**Risposta** (`401`, richiesta successiva con lo stesso token):
+
+```json
+{
+    "error": {
+        "statusCode": 401,
+        "code": "UNAUTHORIZED",
+        "message": "Token revocato"
+    }
+}
+```
+
+---
+
+## ⚙️ Set-up
+
+### Prerequisiti
+
+- **Docker Desktop**, che include Docker Compose;
+- **OpenSSL**, necessario per generare localmente la coppia di chiavi RSA usata dai JWT;
+- Git.
+
+### 1. Clonare il progetto
+
+```bash
+git clone https://github.com/antoniodam03/ProgettoProgrammazioneAvanzata.git
+cd ProgettoProgrammazioneAvanzata
+```
+
+### 2. Configurare le variabili d'ambiente
+
+Nella cartella principale del progetto creare il file `.env` con la seguente configurazione:
+
+```env
+MYSQL_ROOT_PASSWORD=<your-root-password>
+MYSQL_USER=<your-user>
+MYSQL_PASSWORD=<your-password>
+MYSQL_DATABASE=mydb
+DB_HOST=db
+DB_PORT=3306
+PORT=3000
+REDIS_URL=redis://redis:6379
+```
+
+Le chiavi JWT non vanno scritte a mano: i comandi del punto 3 aggiungono automaticamente in fondo al `.env` due variabili di questo tipo (ogni chiave su una sola riga, con `\n` al posto degli a capo):
+
+```env
+JWT_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\nMIIJKA...\n-----END RSA PRIVATE KEY-----\n"
+JWT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\nMIIBIj...\n-----END PUBLIC KEY-----\n"
+```
+
+### 3. Generare la coppia di chiavi RSA per i JWT
+
+Le chiavi sono volutamente escluse dal repository e devono essere create una sola volta sul proprio computer. Dalla cartella principale del progetto, dopo aver creato il file .env eseguire:
+
+```bash
+# Generiamo la chiave privata RSA a 4096 bit (non inserire la passphrase: premere Invio due volte)
+ssh-keygen -t rsa -b 4096 -m PEM -f jwtRS256.key
+
+# Ricaviamo la chiave pubblica in formato PEM (sovrascrive il jwtRS256.key.pub in formato SSH creato da ssh-keygen)
+openssl rsa -in jwtRS256.key -pubout -outform PEM -out jwtRS256.key.pub
+
+#Aggiungiamo le chiavi all'env
+echo "" >> .env
+echo "JWT_PRIVATE_KEY=\"$(awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' jwtRS256.key)\"" >> .env
+echo "JWT_PUBLIC_KEY=\"$(awk 'NF {sub(/\r/, ""); printf "%s\\n",$0;}' jwtRS256.key.pub)\"" >> .env
+
+#Rimuoviamo i file temporanei delle chiavi
+rm jwtRS256.key jwtRS256.key.pub
+```
+
+Le chiavi vengono memorizzate nel file `.env` (escluso dal repository tramite `.gitignore`) e caricate in `backend/src/utils/jwt.ts`, dove vengono passate alla libreria `jsonwebtoken`: la chiave privata firma i token, la chiave pubblica li verifica (schema RS256).
+
+### 4. Avviare l'applicazione con Docker
+
+```bash
+docker compose up --build
+```
+
+Docker inizializza MySQL con `db/init.sql`, avvia Redis, attende che entrambi siano pronti e avvia il backend. Il server sarà raggiungibile su `http://127.0.0.1:3000`.
+
+Per arrestare i container usare `Ctrl+C`; per arrestarli in background usare:
+
+```bash
+docker compose down
+```
+
+Per riportare il database allo stato iniziale dei seed (ad esempio prima di eseguire i test Postman) occorre eliminare anche il volume di MySQL, così che `db/init.sql` venga rieseguito all'avvio:
+
+```bash
+docker compose down -v && docker compose up --build
+```
+
+## 🧪 Test
+
+Il progetto è verificato su due livelli: **test unitari** dei middleware con Jest, e **test delle rotte** tramite una collection Postman.
+
+### Test unitari con Jest
+
+I test si trovano in `backend/src/tests/` e non richiedono né il database né le chiavi JWT reali: i moduli `utils/jwt` e `utils/redis` vengono sostituiti con dei mock (`jest.mock`), così che il comportamento dei middleware sia verificato in isolamento.
+
+| File | Funzione testata | Casi verificati |
+|---|---|---|
+| `authMiddlewareToken.test.ts` | middleware **`authMiddleware`** (autenticazione JWT) | header `Authorization` assente → `401`; token non di tipo `Bearer` → `400`; token valido → `req.user` popolato e `next()` chiamato senza errori; token invalidato con il logout (in blacklist) → `401`; token con versione superata (ruolo cambiato dopo il login) → `401` |
+| `authMiddleware.test.ts` | middleware **`authorize`** (autorizzazione per ruolo) | ruolo che corrisponde esattamente; ruolo incluso tra più ruoli ammessi; `req.user` assente → `401`; operatore su rotta admin → `403`; admin su rotta operatore → `403` |
+
+Per eseguire i test in locale, dalla cartella `backend`:
+
+```bash
+npm test
+```
+
+L'esito atteso è `Tests: 10 passed, 10 total`.
+
+<div align="center">
+  <img src="docs/test_screenshot.png" alt="Esito dei test Jest: 10 superati" width="50%">
+</div>
+
+### Test delle rotte con Postman
+
+Nella cartella `postman/` è presente la collection con tutte le rotte dell'applicazione, organizzata in due cartelle, una per ruolo:
+
+- **Operatore**: login, gestione pazienti (registrazione, aggiornamento, dimissione), richieste di trasfusione (creazione e annullamento di una richiesta già servita, `400`), visualizzazione delle assegnazioni.
+- **Admin**: login, logout, gestione utenti (creazione, cambio ruolo, eliminazione), gestione delle scorte.
+
+Il token viene gestito automaticamente: la richiesta di login contiene lo script
+
+```js
+const jsonData = pm.response.json();
+pm.environment.set("token", jsonData.token);
+```
+
+che salva il token nella variabile d'ambiente `token`, usata come *Bearer Token* da tutte le altre richieste. Le richieste usano gli ID dei dati iniziali di `init.sql` e delle risorse create durante l'esecuzione (ad esempio `/utenti/4` e `/pazienti/4`), quindi la collection va eseguita sul database appena creato (`docker compose down -v && docker compose up --build`).
+
+## 🛠️ Strumenti Utilizzati
+
+Per lo sviluppo dell'applicazione presentata sono stati utilizzati i seguenti strumenti di lavoro:
+
+- [TypeScript](https://www.typescriptlang.org/) come linguaggio di programmazione principale;
+- [Express.js](https://expressjs.com/) come framework per applicazioni Web per Node.js;
+- [Node.js](https://nodejs.org/) come sistema per la gestione di moduli e pacchetti;
+- [Sequelize](https://sequelize.org/) per l'Object Relational Mapping (ORM);
+- [Docker](https://www.docker.com/) come sistema di containerizzazione per il deployment dell'applicazione;
+- [MySQL](https://www.mysql.com/) come database;
+- [Redis](https://redis.io/) per la gestione delle sessioni (logout e revoca dei token);
+- [JWT](https://jwt.io/) (RS256) e [bcrypt](https://www.npmjs.com/package/bcrypt) per l'autenticazione e la sicurezza delle password;
+- [Jest](https://jestjs.io/) per i test automatizzati;
+- [Postman](https://www.postman.com/) per il testing delle rotte API;
+- [GitHub](https://github.com/) come piattaforma di condivisione e versioning del codice;
+- [Visual Studio Code](https://code.visualstudio.com/) come editor di codice.
+
+
+## 👥 Autori
+
+- [Antonio D'Amelio](https://github.com/antoniodam03)

@@ -1,11 +1,13 @@
-import { scorta, scortaAttributes, scortaCreationAttributes } from '../models/scorta';
-import { DAO } from './daoInterface';
+import { scorta, scortaAttributes } from '../models/scorta';
+import { ReadDAO } from './daoInterface';
 import { Transaction } from 'sequelize';
 
 /**
  * DAO per le operazioni sulla tabella scorta.
+ * Le scorte sono fisse (una per gruppo sanguigno): si leggono e si aggiorna la quantità,
+ * ma non si creano né si eliminano.
  */
-class ScortaDAO implements DAO<scortaAttributes, number> {
+class ScortaDAO implements ReadDAO<scortaAttributes, number> {
 
     /**
      * Restituisce tutte le scorte per gruppo sanguigno.
@@ -44,13 +46,6 @@ class ScortaDAO implements DAO<scortaAttributes, number> {
     }
 
     /**
-     * Crea una nuova scorta.
-     */
-    public async create(item: Partial<scortaAttributes>): Promise<scorta> {
-        return await scorta.create(item as scortaCreationAttributes);
-    }
-
-    /**
      * Aggiorna la quantità di una scorta e il timestamp, e restituisce la scorta aggiornata
      * (oppure null se non esiste).
      */
@@ -60,15 +55,6 @@ class ScortaDAO implements DAO<scortaAttributes, number> {
             { where: { id }, fields: ['quantita', 'data_aggiornamento'], ...options }
         );
         return await scorta.findByPk(id, options);
-    }
-
-    /**
-     * Elimina una scorta tramite il suo ID e restituisce il numero di righe eliminate (0 se non esiste).
-     */
-    public async delete(id: number): Promise<number> {
-        return await scorta.destroy({
-            where: {id}
-        });
     }
 }
 

@@ -1,11 +1,13 @@
 import { assegnazione, assegnazioneAttributes, assegnazioneCreationAttributes } from '../models/assegnazione';
-import { DAO } from './daoInterface';
+import { ReadDAO } from './daoInterface';
 import { Transaction } from 'sequelize';
 
 /**
  * DAO per le operazioni sulla tabella assegnazione.
+ * Le assegnazioni vengono create solo dal ricalcolo del flusso (inserimento in blocco)
+ * e poi soltanto lette.
  */
-class AssegnazioneDAO implements DAO<assegnazioneAttributes, number> {
+class AssegnazioneDAO implements ReadDAO<assegnazioneAttributes, number> {
 
     /**
      * Restituisce tutte le assegnazioni.
@@ -22,36 +24,11 @@ class AssegnazioneDAO implements DAO<assegnazioneAttributes, number> {
     }
 
     /**
-     * Crea una nuova assegnazione.
-     */
-    public async create(item: Partial<assegnazioneAttributes>): Promise<assegnazione> {
-        return await assegnazione.create(item as assegnazioneCreationAttributes);
-    }
-
-    /**
      * Inserisce assegnazioni in massa.
      */
     public async bulkCreate(items: Partial<assegnazioneAttributes>[], options?: { transaction?: Transaction }): Promise<assegnazione[]> {
         if (items.length === 0) return [];
         return await assegnazione.bulkCreate(items as assegnazioneCreationAttributes[], options);
-    }
-
-    /**
-     * Aggiorna un'assegnazione tramite il suo ID e la restituisce aggiornata,
-     * oppure null se non esiste.
-     */
-    public async update(id: number, item: Partial<assegnazioneAttributes>): Promise<assegnazione | null> {
-        await assegnazione.update(item, { where: { id } });
-        return await assegnazione.findByPk(id);
-    }
-
-    /**
-     * Elimina un'assegnazione tramite il suo ID e restituisce il numero di righe eliminate (0 se non esiste).
-     */
-    public async delete(id: number): Promise<number> {
-        return await assegnazione.destroy({
-            where: { id }
-        });
     }
 }
 
