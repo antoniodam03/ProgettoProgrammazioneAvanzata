@@ -5,6 +5,7 @@ import {
     validateGetRichieste,
     validateGetRichiestaById,
     validateCreateRichiesta,
+    validateAnnullaRichiesta,
 } from '../middleware/validate/richiestaValidation';
 
 const router = Router();
@@ -22,5 +23,8 @@ router.get('/:id', authMiddleware, authorize(Ruolo.operatore), validateGetRichie
 // POST /richieste - Crea una nuova richiesta (accessibile da operatore)
 
 router.post('/', authMiddleware, authorize(Ruolo.operatore), validateCreateRichiesta, richiestaController.createRichiesta);
+
+// DELETE /richieste/:id - Annulla una richiesta ancora in attesa (accessibile da operatore)
+router.delete('/:id', authMiddleware, authorize(Ruolo.operatore), validateAnnullaRichiesta, richiestaController.annullaRichiesta);
 
 export default router;

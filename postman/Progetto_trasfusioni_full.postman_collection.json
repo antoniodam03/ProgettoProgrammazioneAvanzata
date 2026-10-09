@@ -684,6 +684,36 @@
           "response": []
         },
         {
+          "name": "annullaRichiesta",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "http://{{HOST}}:{{PORT}}/richieste/1",
+              "protocol": "http",
+              "host": [
+                "{{HOST}}"
+              ],
+              "port": "{{PORT}}",
+              "path": [
+                "richieste",
+                "1"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
           "name": "getAllAssegnazioni",
           "request": {
             "auth": {

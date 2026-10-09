@@ -57,3 +57,17 @@ export const createRichiesta = async (req: AuthenticatedRequest, res: Response, 
         next(error);
     }
 };
+
+/**
+ * Annulla una richiesta ancora in attesa (nessuna sacca assegnata).
+ * Lancia NotFound se non esiste, BadRequest se ha già ricevuto sacche.
+ */
+export const annullaRichiesta = async (req: Request, res: Response, next: NextFunction) => {
+    const id = Number(req.params.id);
+    try {
+        await richiestaRepository.annullaRichiesta(id);
+        res.status(StatusCodes.NO_CONTENT).send();
+    } catch (error) {
+        next(error);
+    }
+};

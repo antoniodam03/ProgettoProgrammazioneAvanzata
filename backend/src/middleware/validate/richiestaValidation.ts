@@ -58,3 +58,11 @@ export const validateCreateRichiesta = [
         .withMessage(`La priorità deve essere una tra: ${PRIORITA_VALIDE.join(', ')}`),
     validateRequest,
 ];
+
+/**
+ * Validazione per DELETE /richieste/:id
+ */
+export const validateAnnullaRichiesta = [
+    param('id').isInt({ min: 1 }).withMessage("L'ID deve essere un intero positivo"),
+    validateRequest,
+];

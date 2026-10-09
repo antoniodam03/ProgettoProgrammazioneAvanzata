@@ -6,6 +6,7 @@ import { Op, WhereOptions, Transaction } from 'sequelize';
 import assegnazioneDAO from '../dao/assegnazioneDAO';
 import { sequelize } from '../utils/database';
 import { GruppoSanguigno, Priorita, StatoPaziente, StatoRichiesta } from '../utils/enum';
+import scortaDAO from '../dao/scortaDAO';
 
 /**
  * Filtri accettati per le query sulle richieste.
@@ -161,6 +162,36 @@ class RichiestaRepository {
             id_paziente_paziente: mappaPazienti.get(r.id_paziente)!,
             assegnaziones: assegnazioni.filter(a => a.id_richiesta === r.id)
         }));
+    }
+
+    /**
+     * Annulla una richiesta solo se la richiesta è in attesa, ovvero, non ha sacche assegnate.
+     */
+    public async annullaRichiesta(id : number) : Promise<void>{
+        const t = await sequelize.transaction();
+        try{
+            // Blocca le scorte come il ricalcolo del flusso: le due operazioni non possono sovrapporsi
+            await scortaDAO.getAllForUpdate({ transaction: t });
+
+            const [r] = await richiestaDAO.getAll({ id }, { transaction: t });
+            if (!r) {
+                throw ErrorFactory.createError(ErrorTypes.NotFound, `Richiesta con ID ${id} non trovata`);
+            }
+            if (r.stato !== StatoRichiesta.in_attesa) {
+                throw ErrorFactory.createError(
+                    ErrorTypes.BadRequest,
+                    `La richiesta con ID ${id} ha già ricevuto sacche (stato: ${r.stato}) e non può essere annullata`
+                );
+            }
+
+            // La cancellazione avviene mentre il blocco sulle scorte è ancora attivo (prima del commit):
+            // un ricalcolo in arrivo resta in attesa e non può assegnare sacche a questa richiesta
+            await richiestaDAO.delete(id);
+            await t.commit();
+        } catch (error) {
+            await t.rollback();
+            throw error;
+        }
     }
 }
 
