@@ -138,7 +138,7 @@ Il diagramma dei casi d'uso (UML Use Case Diagram) illustra le interazioni degli
    - **Esegue Login**: Consente a chiunque di autenticarsi fornendo le credenziali per ottenere un token JWT e accedere alle risorse protette in base al proprio ruolo.
 
 2. **Utente Autenticato**
-   - Funge da base per la propagazione dell'autorizzazione basata sui ruoli.
+   - Funge da base per la gestione dell'autorizzazione basata sui ruoli.
 
 3. **Admin**
    - **Gestione Profili Utenti**:
@@ -221,7 +221,7 @@ Il pattern architetturale scelto per la struttura del sistema è il Model-View-C
 
 Per astrarre la logica di accesso ai dati, indipendentemente dal tipo di meccanismo di memorizzazione utilizzato, è stato scelto il pattern Data Access Object (DAO). Esso fornisce un'interfaccia astratta comune per eseguire operazioni CRUD e altre operazioni di accesso ai dati, isolando il codice di accesso ai dati dalla logica di business.
 
-Il DAO presenta diverse componenti: l'interfaccia di definizione dei metodi di accesso ai dati che devono essere implementati (`daoInterface.ts`), l'implementazione concreta dei metodi definiti dall'interfaccia DAO, che contiene il codice specifico di interazione con le fonti di dati, e le classi di entità, cioè i Model, che rappresentano i dati che vengono manipolati dal DAO. Queste ultime classi sono mappate alle tabelle del database.
+Il DAO presenta diverse componenti: l'interfaccia di definizione dei metodi di accesso ai dati che devono essere implementati (`daoInterface.ts`), l'implementazione concreta dei metodi definiti dall'interfaccia DAO, che contiene il codice specifico di interazione con la base di dati, e le classi di entità, cioè i Model, che rappresentano i dati che vengono manipolati dal DAO. Queste ultime classi sono mappate alle tabelle del database.
 
 L'utilità principale del pattern è rappresentata dal fatto che ad un singolo Model viene corrisposto un singolo DAO, garantendo l'accesso ai dati necessari, e, soprattutto, uno o più DAO possono essere richiamati da componenti superiori quali i Repository, per l'utilizzo combinato dell'accesso ai dati. In questo modo, non solo è garantita un'elevata riutilizzabilità del codice in diverse parti dell'applicazione, ma soprattutto viene implementata una forte modularità e separazione delle responsabilità da parte di tutte le componenti.
 
