@@ -1095,7 +1095,7 @@ L'esito atteso è `Tests: 10 passed, 10 total`.
 
 Nella cartella `postman/` è presente la collection con tutte le rotte dell'applicazione, organizzata in due cartelle, una per ruolo:
 
-- **Operatore**: login, gestione pazienti (registrazione, aggiornamento, dimissione), richieste di trasfusione (creazione e annullamento di una richiesta già servita, `400`), visualizzazione delle assegnazioni.
+- **Operatore**: login, pazienti (elenco, elenco dei ricoverati, dettaglio, registrazione, aggiornamento, dimissione), richieste di trasfusione (elenco, dettaglio, creazione, annullamento di una richiesta già servita che restituisce `400`), assegnazioni (elenco e dettaglio).
 - **Admin**: login, logout, gestione utenti (creazione, cambio ruolo, eliminazione), gestione delle scorte.
 
 Il token viene gestito automaticamente: la richiesta di login contiene lo script
